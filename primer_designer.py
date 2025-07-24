@@ -14,12 +14,6 @@ from Bio.SeqUtils import MeltingTemp as mt
 # --- CONFIGURATION PARAMETERS ---
 # ==============================================================================
 
-# --- Input and Mode Selection ---
-FASTA_FILE_PATH = "./data/avengers-3.fa"  # Path to the input FASTA file with target sequences.
-PRIMER_TYPE = "RACE"  # Design primers for "qPCR" or "RACE" applications.
-DESIGN_MODE = "coverage"  # "specificity": design unique primers for each isoform.
-                          # "coverage": find a minimal set of primers to cover all isoforms.
-
 # --- qPCR Specific Parameters ---
 # Defines the regions to search for forward and reverse primers and product size constraints.
 PARAMS_QPCR = {
@@ -218,29 +212,44 @@ def design_qpcr_primers(sequences, params, mode):
         rev_region = seq[params["rev_start"] - 1:params["rev_end"]]
 
         fw_candidates = find_candidate_primers(fw_region, params["k_range"], params["gc_min"], params["gc_max"])
-        rev_candidates = find_candidate_primers(rev_region, params["k_range"], params["gc_min"], params["gc_max"])
+        # Find k-mers on the template strand, then reverse-complement them to get actual primers.
+        rev_template_candidates = find_candidate_primers(rev_region, params["k_range"], params["gc_min"], params["gc_max"])
+        # Create a map of {actual_reverse_primer: template_sequence} for calculating product size later.
+        rev_candidates_map = {reverse_complement(p): p for p in rev_template_candidates}
 
-        if not fw_candidates or not rev_candidates:
+        if not fw_candidates or not rev_candidates_map:
             best_primers[name] = None
             other_options[name] = []
             continue
 
         fw_checks = {fw: check_cached_primer_hits(fw, sequences_tuple) for fw in fw_candidates}
-        rev_checks = {rv: check_cached_primer_hits(rv, sequences_tuple) for rv in rev_candidates}
+        # Check specificity using the actual reverse primer sequences.
+        rev_checks = {rv: check_cached_primer_hits(rv, sequences_tuple) for rv in rev_candidates_map.keys()}
 
         valid_fw = fw_candidates
-        valid_rev = rev_candidates
+        valid_rev = list(rev_candidates_map.keys())
+
         if mode == "specificity":
             isoform_id = extract_isoform_id(name)
-            valid_fw = [fw for fw, check in fw_checks.items() if check["total"] == 1 and isoform_id in check["isoformas"]]
-            valid_rev = [rv for rv, check in rev_checks.items() if check["total"] == 1 and isoform_id in check["isoformas"]]
+            valid_fw = [fw for fw, check in fw_checks.items() if check["total"] == 1 and isoform_id in check["isoforms"]]
+            valid_rev = [rv for rv, check in rev_checks.items() if check["total"] == 1 and isoform_id in check["isoforms"]]
 
         best_pair = None
         other_pairs = []
 
         for fw, rv in product(valid_fw, valid_rev):
-            # This size calculation seems simplified; a more accurate one would find the primer positions.
-            product_size = params["rev_end"] - params["fw_start"] + len(rv)
+            # --- CORRECTED PRODUCT SIZE CALCULATION ---
+            fw_pos = seq.find(fw, params["fw_start"] - 1)
+            # Retrieve the original template sequence for the reverse primer to find its position.
+            rv_template = rev_candidates_map[rv]
+            rv_template_pos = seq.find(rv_template, params["rev_start"] - 1)
+
+            if fw_pos == -1 or rv_template_pos == -1:
+                continue
+
+            # Correctly calculate product size.
+            product_size = (rv_template_pos + len(rv_template)) - fw_pos
+            
             if not (params["prod_min"] <= product_size <= params["prod_max"]):
                 continue
 
@@ -248,15 +257,15 @@ def design_qpcr_primers(sequences, params, mode):
 
             if mode == "specificity":
                 best_pair = primer_pair
-                break  # Found the first specific pair, so we can stop.
-            else: # coverage mode (within a single isoform context)
+                break  # Found the first specific pair, stop searching for this isoform.
+            else: # coverage mode
                 if len(other_pairs) < 10:
                     other_pairs.append(primer_pair)
                 if not best_pair:
-                    best_pair = primer_pair # Keep the first one as a fallback.
-        
-        if mode == "specificity" and best_pair:
-            break # Exit outer loop once a specific primer is found for this isoform
+                    best_pair = primer_pair
+
+        # --- REMOVED LOGIC FLAW ---
+        # The original code had a 'break' here that prematurely exited the main loop.
 
         best_primers[name] = best_pair
         other_options[name] = other_pairs
@@ -282,7 +291,9 @@ def design_race_primers(sequences, params, mode):
         rev_region = seq[-params["window_size"]:]
 
         fw_candidates = find_candidate_primers(fw_region, params["k_range"], params["gc_min"], params["gc_max"])
-        rev_candidates = find_candidate_primers(rev_region, params["k_range"], params["gc_min"], params["gc_max"])
+        # --- CORRECTED REVERSE PRIMER GENERATION ---
+        rev_template_candidates = find_candidate_primers(rev_region, params["k_range"], params["gc_min"], params["gc_max"])
+        rev_candidates = [reverse_complement(p) for p in rev_template_candidates]
 
         if not fw_candidates or not rev_candidates:
             best_primers[name] = None
@@ -296,8 +307,8 @@ def design_race_primers(sequences, params, mode):
         valid_rev = rev_candidates
         if mode == "specificity":
             isoform_id = extract_isoform_id(name)
-            valid_fw = [fw for fw, check in fw_checks.items() if check["total"] == 1 and isoform_id in check["isoformas"]]
-            valid_rev = [rv for rv, check in rev_checks.items() if check["total"] == 1 and isoform_id in check["isoformas"]]
+            valid_fw = [fw for fw, check in fw_checks.items() if check["total"] == 1 and isoform_id in check["isoforms"]]
+            valid_rev = [rv for rv, check in rev_checks.items() if check["total"] == 1 and isoform_id in check["isoforms"]]
 
         best_pair = None
         other_pairs = []
@@ -313,8 +324,8 @@ def design_race_primers(sequences, params, mode):
                 if not best_pair:
                     best_pair = primer_pair
 
-        if mode == "specificity" and best_pair:
-            break
+        # --- REMOVED LOGIC FLAW ---
+        # The original code had a 'break' here that prematurely exited the main loop.
 
         best_primers[name] = best_pair
         other_options[name] = other_pairs
@@ -388,46 +399,43 @@ def find_coverage_primers(sequences, params_qpcr, params_race, primer_type):
 # --- SCRIPT EXECUTION ---
 # ==============================================================================
 
-def main():
+def create_design(fasta_file_path, primer_type, design_mode):
     """
     Main function to execute the primer design pipeline.
     """
-    print(f"📂 Reading FASTA file: {FASTA_FILE_PATH}")
+    print(f"📂 Reading FASTA file: {fasta_file_path}")
     try:
-        sequence_set = list(SeqIO.parse(FASTA_FILE_PATH, "fasta"))
+        sequence_set = list(SeqIO.parse(fasta_file_path, "fasta"))
         if not sequence_set:
             print("❌ Error: No sequences found in the FASTA file.")
             return
         print(f"✅ Loaded {len(sequence_set)} sequences.")
     except FileNotFoundError:
-        print(f"❌ Error: FASTA file not found at '{FASTA_FILE_PATH}'")
+        print(f"❌ Error: FASTA file not found at '{fasta_file_path}'")
         return
 
     results = None
-    if DESIGN_MODE == "specificity":
-        print(f"🧬 Running in SPECIFICITY mode for {PRIMER_TYPE} primers...")
-        if PRIMER_TYPE == "qPCR":
-            results = design_qpcr_primers(sequence_set, PARAMS_QPCR, DESIGN_MODE)
-        elif PRIMER_TYPE == "RACE":
-            results = design_race_primers(sequence_set, PARAMS_RACE, DESIGN_MODE)
+    if design_mode == "specificity":
+        print(f"🧬 Running in SPECIFICITY mode for {primer_type} primers...")
+        if primer_type == "qPCR":
+            results = design_qpcr_primers(sequence_set, PARAMS_QPCR, design_mode)
+        elif primer_type == "RACE":
+            results = design_race_primers(sequence_set, PARAMS_RACE, design_mode)
         else:
-            print(f"⚠️ Unsupported primer type: {PRIMER_TYPE}")
+            print(f"⚠️ Unsupported primer type: {primer_type}")
             return
 
-    elif DESIGN_MODE == "coverage":
-        print(f"🎯 Running in COVERAGE mode for {PRIMER_TYPE} primers...")
-        results = find_coverage_primers(sequence_set, PARAMS_QPCR, PARAMS_RACE, PRIMER_TYPE)
+    elif design_mode == "coverage":
+        print(f"🎯 Running in COVERAGE mode for {primer_type} primers...")
+        results = find_coverage_primers(sequence_set, PARAMS_QPCR, PARAMS_RACE, primer_type)
     else:
-        print(f"⚠️ Unsupported design mode: {DESIGN_MODE}")
+        print(f"⚠️ Unsupported design mode: {design_mode}")
         return
 
     # --- Process and Save Results ---
-    output_dir = "./output"
-    os.makedirs(output_dir, exist_ok=True)
     
     df_rows = []
-    if DESIGN_MODE == "specificity":
-        output_path = os.path.join(output_dir, "results_specificity.csv")
+    if design_mode == "specificity":
         for isoform_name, pair in results["best"].items():
             if not pair: continue
             f, r = pair["forward"], pair["reverse"]
@@ -445,8 +453,7 @@ def main():
                 "SelfDimer_Reverse": find_longest_complementary_run(r, r),
                 "CrossDimer": find_longest_complementary_run(f, reverse_complement(r)),
             })
-    elif DESIGN_MODE == "coverage":
-        output_path = os.path.join(output_dir, "results_coverage.csv")
+    elif design_mode == "coverage":
         for item in results["selected"]:
             df_rows.append({
                 "Primer_Forward": item["forward"],
@@ -455,11 +462,13 @@ def main():
             })
 
     if df_rows:
-        results_df = pd.DataFrame(df_rows)
-        results_df.to_csv(output_path, index=False)
-        print(f"✅ Results successfully saved to {output_path}")
+        return pd.DataFrame(df_rows)
     else:
-        print("ℹ️ No suitable primers were found with the given parameters.")
+        return None
+
 
 if __name__ == "__main__":
-    main()
+    FASTA_FILE_PATH = "./data/avengers-3.fa"
+    PRIMER_TYPE = "RACE"
+    DESIGN_MODE = "coverage" 
+    create_design(FASTA_FILE_PATH, PRIMER_TYPE, DESIGN_MODE)

@@ -1,52 +1,59 @@
 import streamlit as st
-import pandas as pd
 import tempfile
 import os
+from primer_designer import create_design
 
-# Placeholder for your primer design function
+
 def run_primer_design(fasta_path, primer_type, design_mode):
-    # Replace this with your real logic
-    # Simulated output:
-    data = {
-        "Primer ID": ["primer1", "primer2"],
-        "Sequence": ["ATCGTAGCTAGCT", "CGATCGATGCTA"],
-        "Tm": [60.1, 59.5],
-        "GC%": [52, 48]
-    }
-    df = pd.DataFrame(data)
-    return df
+    return create_design(fasta_path, primer_type, design_mode)
 
-# Streamlit UI
-st.title("Primer Design App")
 
-uploaded_file = st.file_uploader("Upload FASTA file", type=["fa", "fasta"])
+st.title("PRIMEGEN")
+
+uploaded_file = st.file_uploader("Choose FASTA file", type=["fa", "fasta"])
 primer_type = st.selectbox("Select Primer Type", ["qPCR", "RACE"])
 design_mode = st.selectbox("Select Design Mode", ["specificity", "coverage"])
 
+# Initialize session state
+if "output_df" not in st.session_state:
+    st.session_state.output_df = None
+if "fasta_path" not in st.session_state:
+    st.session_state.fasta_path = None
+
 if st.button("Run Primer Design"):
     if uploaded_file is None:
-        st.error("Please upload a FASTA file first.")
+        st.error("Please choose a FASTA file first.")
     else:
         # Save uploaded file to a temporary path
         with tempfile.NamedTemporaryFile(delete=False, suffix=".fa") as tmp_file:
             tmp_file.write(uploaded_file.read())
-            fasta_path = tmp_file.name
+            st.session_state.fasta_path = tmp_file.name
 
         # Run the logic
         with st.spinner("Running primer design..."):
-            output_df = run_primer_design(fasta_path, primer_type, design_mode)
+            output_df = run_primer_design(
+                st.session_state.fasta_path, primer_type, design_mode
+            )
 
-        st.success("Primer design completed!")
-        st.dataframe(output_df)
+        if output_df is None:
+            st.error("No suitable primers were found with the given parameters.")
+        else:
+            st.success("Primer design completed!")
+            st.session_state.output_df = output_df
 
-        # Create CSV for download
-        csv = output_df.to_csv(index=False).encode('utf-8')
-        st.download_button(
-            label="Download Results as CSV",
-            data=csv,
-            file_name="primers_output.csv",
-            mime="text/csv"
-        )
+# Show output and download button if results are stored
+if st.session_state.output_df is not None:
+    st.dataframe(st.session_state.output_df)
 
-        # Clean up temp file
-        os.remove(fasta_path)
+    csv = st.session_state.output_df.to_csv(index=False).encode("utf-8")
+    st.download_button(
+        label="Download Results as CSV",
+        data=csv,
+        file_name="primers_output.csv",
+        mime="text/csv",
+    )
+
+# Optional cleanup after displaying
+if st.session_state.fasta_path and os.path.exists(st.session_state.fasta_path):
+    os.remove(st.session_state.fasta_path)
+    st.session_state.fasta_path = None
