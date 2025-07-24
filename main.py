@@ -15,7 +15,7 @@ from itertools import product
 
 fasta_path = "./data/avengers-3.fa"
 primer_type = "RACE"  # Options: "qPCR" or "RACE"
-mode_text = "specificity"  # Options: "specificity" or "coverage"
+mode_text = "coverage"  # Options: "specificity" or "coverage"
 
 params_qpcr = {
     "fw_start": 50, "fw_end": 100,
@@ -84,9 +84,9 @@ def obtener_candidatos(region, k_range, gc_min, gc_max):
 # Read input FASTA
 # -------------------------------
 
-print("📂 Leyendo archivo FASTA...")
+print(f"📂 Reading FASTA {fasta_path}")
 seq_set = list(SeqIO.parse(fasta_path, "fasta"))
-print(f"Se han leído {len(seq_set)} secuencias.")
+print(f"✅ {len(seq_set)} sequences loaded.")
 
 # -------------------------------
 # Design logic
@@ -241,39 +241,48 @@ else:
 # Export results to Excel
 # -------------------------------
 
-wb = Workbook()
-ws_best = wb.active
-ws_best.title = "Best_Primers"
-
-headers = ["Isoforma", "Primer_Forward", "Primer_Reverse", "GC_Forward", "GC_Reverse",
-           "Tm_Forward", "Tm_Reverse", "Hairpin_Forward", "Hairpin_Reverse",
-           "SelfDimer_Forward", "SelfDimer_Reverse", "CrossDimer"]
-ws_best.append(headers)
-
-# Handle both specificity and coverage mode outputs
-if mode_text == "specificity":
-    for nm, p in resultados["best"].items():
-        if not p: continue
-        f, r = p["forward"], p["reverse"]
-        row = [
-            nm, f, r,
-            calcular_gc(f), calcular_gc(r),
-            calcular_tm(f), calcular_tm(r),
-            longest_complementary(f, reverse_complement(f)),
-            longest_complementary(r, reverse_complement(r)),
-            longest_complementary(f, f),
-            longest_complementary(r, r),
-            longest_complementary(f, reverse_complement(r))
-        ]
-        ws_best.append(row)
-else:
-    ws_cov = wb.create_sheet("Coverage_Primers")
-    ws_cov.append(["Primer_Forward", "Primer_Reverse", "Isoformas"])
-    for item in resultados["selected"]:
-        ws_cov.append([item["forward"], item["reverse"], ";".join(item["isoforms"])])
+import csv
 
 # Create output directory if it doesn't exist
 os.makedirs("./output", exist_ok=True)
-output_path = "./output/results.xlsx"
-wb.save(output_path)
-print(f"✅ Resultados guardados en: {output_path}")
+
+if mode_text == "specificity":
+    rows = []
+    for nm, p in resultados["best"].items():
+        if not p:
+            continue
+        f, r = p["forward"], p["reverse"]
+        row = {
+            "Isoforma": nm,
+            "Primer_Forward": f,
+            "Primer_Reverse": r,
+            "GC_Forward": calcular_gc(f),
+            "GC_Reverse": calcular_gc(r),
+            "Tm_Forward": calcular_tm(f),
+            "Tm_Reverse": calcular_tm(r),
+            "Hairpin_Forward": longest_complementary(f, reverse_complement(f)),
+            "Hairpin_Reverse": longest_complementary(r, reverse_complement(r)),
+            "SelfDimer_Forward": longest_complementary(f, f),
+            "SelfDimer_Reverse": longest_complementary(r, r),
+            "CrossDimer": longest_complementary(f, reverse_complement(r))
+        }
+        rows.append(row)
+
+    df = pd.DataFrame(rows)
+    output_path = "./output/results_specificity.csv"
+
+else:  # mode_text == "coverage"
+    rows = []
+    for item in resultados["selected"]:
+        row = {
+            "Primer_Forward": item["forward"],
+            "Primer_Reverse": item["reverse"],
+            "Isoformas": ";".join(item["isoforms"])
+        }
+        rows.append(row)
+
+    df = pd.DataFrame(rows)
+    output_path = "./output/results_coverage.csv"
+
+df.to_csv(output_path, index=False)
+print(f"✅ Results saved to {output_path}")
