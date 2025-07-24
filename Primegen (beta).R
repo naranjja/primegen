@@ -12,7 +12,7 @@ library(openxlsx)
 # CONFIGURACIÓN
 # -------------------------------
 cat("Seleccione el archivo FASTA con las isoformas:\n")
-archivo_fasta <- file.choose()
+archivo_fasta <- "./avengers.fa"
 seq_set <- readDNAStringSet(archivo_fasta)
 cat("Se han leído", length(seq_set), "secuencias.\n")
 
