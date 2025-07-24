@@ -274,6 +274,6 @@ else:
 
 # Create output directory if it doesn't exist
 os.makedirs("./output", exist_ok=True)
-output_path = "./output/resultados_mock.xlsx"
+output_path = "./output/results.xlsx"
 wb.save(output_path)
 print(f"✅ Resultados guardados en: {output_path}")
