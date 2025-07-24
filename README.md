@@ -1,3 +1,4 @@
 ### Run for testing
-- `Rscript requirements.R`
-- `Rscript Primegen (beta).R`
+- `cd src`
+- `Rscript requirements.r`
+- `Rscript main.r`
