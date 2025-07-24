@@ -137,23 +137,26 @@ def calculate_melting_temp(sequence, na_conc=50e-3):
         return 0.0
 
 def extract_isoform_id(name):
-    """Extracts an isoform number (e.g., '3') from a sequence name (e.g., 'gene-3')."""
-    match = re.search(r"-([0-9]+)", name)
+    """
+    Extracts an isoform number (e.g., '3') from a sequence name.
+    Tries to match patterns like 'gene-3', 'transcript_2', etc.
+    """
+    match = re.search(r"[-_]?(\d+)$", name)
+    if not match:
+        print(f"⚠️ Could not extract isoform ID from: {name}")
     return match.group(1) if match else ""
 
 def check_primer_hits(primer, sequences):
     """
-    Finds all sequence records that contain a given primer sequence.
-
-    Args:
-        primer (str): The primer sequence to search for.
-        sequences (iterable): An iterable of Biopython SeqRecord objects.
-
-    Returns:
-        dict: A dictionary containing the total number of hits and a
-              comma-separated string of the isoform IDs that were hit.
+    Finds all sequence records that contain a given primer sequence
+    or its reverse complement.
     """
-    hits = [rec.id for rec in sequences if primer in str(rec.seq)]
+    primer_rc = reverse_complement(primer)
+    hits = [
+        rec.id
+        for rec in sequences
+        if primer in str(rec.seq) or primer_rc in str(rec.seq)
+    ]
     return {"total": len(hits), "isoforms": ",".join(hits)}
 
 def find_candidate_primers(region, k_range, gc_min, gc_max):
@@ -231,8 +234,16 @@ def design_qpcr_primers(sequences, params, mode):
 
         if mode == "specificity":
             isoform_id = extract_isoform_id(name)
-            valid_fw = [fw for fw, check in fw_checks.items() if check["total"] == 1 and isoform_id in check["isoforms"]]
-            valid_rev = [rv for rv, check in rev_checks.items() if check["total"] == 1 and isoform_id in check["isoforms"]]
+            valid_fw = [
+                fw for fw, check in fw_checks.items()
+                if isoform_id in check["isoforms"] and check["total"] <= 2
+            ]
+            valid_rev = [
+                rv for rv, check in rev_checks.items()
+                if isoform_id in check["isoforms"] and check["total"] <= 2
+            ]
+        
+        print(f"🔍 [{name}] Found {len(valid_fw)} FW primers, {len(valid_rev)} REV primers after specificity filtering.")
 
         best_pair = None
         other_pairs = []
@@ -307,8 +318,16 @@ def design_race_primers(sequences, params, mode):
         valid_rev = rev_candidates
         if mode == "specificity":
             isoform_id = extract_isoform_id(name)
-            valid_fw = [fw for fw, check in fw_checks.items() if check["total"] == 1 and isoform_id in check["isoforms"]]
-            valid_rev = [rv for rv, check in rev_checks.items() if check["total"] == 1 and isoform_id in check["isoforms"]]
+            valid_fw = [
+                fw for fw, check in fw_checks.items()
+                if isoform_id in check["isoforms"] and check["total"] <= 2
+            ]
+            valid_rev = [
+                rv for rv, check in rev_checks.items()
+                if isoform_id in check["isoforms"] and check["total"] <= 2
+            ]
+
+        print(f"🔍 [{name}] Found {len(valid_fw)} FW primers, {len(valid_rev)} REV primers after specificity filtering.")
 
         best_pair = None
         other_pairs = []
