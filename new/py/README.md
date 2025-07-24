@@ -1,0 +1,3 @@
+- `virtualenv venv`
+- `source venv/bin/activate` (UNIX) or `.\venv\Scripts\Activate` (Windows)
+- `pip install -r requirements.txt`
