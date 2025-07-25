@@ -10,37 +10,6 @@ from Bio.Seq import Seq
 from Bio.SeqUtils import MeltingTemp as mt
 
 # ==============================================================================
-# --- CONFIGURATION PARAMETERS ---
-# ==============================================================================
-
-# --- qPCR Specific Parameters ---
-# Defines the regions to search for forward and reverse primers and product size constraints.
-PARAMS_QPCR = {
-    "fw_start": 50,             # Start position for forward primer search region.
-    "fw_end": 100,              # End position for forward primer search region.
-    "rev_start": 150,           # Start position for reverse primer search region.
-    "rev_end": 200,             # End position for reverse primer search region.
-    "k_range": range(18, 26),   # Range of possible k-mer (primer) lengths.
-    "gc_min": 50,               # Minimum GC content percentage.
-    "gc_max": 70,               # Maximum GC content percentage.
-    "prod_min": 80,             # Minimum PCR product size.
-    "prod_max": 150,            # Maximum PCR product size.
-    "tm_min": 57,               # Minimum melting temperature (Tm).
-    "tm_max": 62,               # Maximum melting temperature (Tm).
-}
-
-# --- RACE Specific Parameters ---
-# Defines the search window at the ends of the sequence for RACE primers.
-PARAMS_RACE = {
-    "window_size": 200,         # Size of the search window from the 5' and 3' ends.
-    "k_range": range(23, 29),   # Range of possible k-mer (primer) lengths.
-    "gc_min": 50,               # Minimum GC content percentage.
-    "gc_max": 70,               # Maximum GC content percentage.
-    "tm_min": 57,               # Minimum melting temperature (Tm).
-    "tm_max": 62,               # Maximum melting temperature (Tm).
-}
-
-# ==============================================================================
 # --- CORE BIOINFORMATICS UTILITY FUNCTIONS ---
 # ==============================================================================
 
@@ -157,7 +126,6 @@ def check_primer_hits(primer, sequences):
         if primer in str(rec.seq) or primer_rc in str(rec.seq)
     ]
     return {"total": len(hits), "isoforms": ",".join(hits)}
-
 
 def find_candidate_primers(sequence, k_range, gc_min, gc_max, tm_min, tm_max):
     candidates = []
@@ -435,7 +403,40 @@ def find_coverage_primers(sequences, params_qpcr, params_race, primer_type):
 # --- SCRIPT EXECUTION ---
 # ==============================================================================
 
-def create_design(fasta_file_path, primer_type, design_mode):
+def parse_params(qpcr_params, race_params):
+    if qpcr_params:
+        qpcr_params = {
+            "fw_start": qpcr_params["fw_range"][0],         # Start position for forward primer search region.
+            "fw_end": qpcr_params["fw_range"][1],           # End position for forward primer search region.
+            "rev_start": qpcr_params["rev_range"][0],       # Start position for reverse primer search region.
+            "rev_end": qpcr_params["rev_range"][1],         # End position for reverse primer search region.
+            "k_range": range(                               # Range of possible k-mer (primer) lengths.
+                qpcr_params["k_range"][0], 
+                qpcr_params["k_range"][1]
+            ),   
+            "gc_min": qpcr_params["gc_range"][0]*100,       # Minimum GC content percentage.
+            "gc_max": qpcr_params["gc_range"][1]*100,       # Maximum GC content percentage.
+            "prod_min": qpcr_params["prod_range"][0],       # Minimum PCR product size.
+            "prod_max": qpcr_params["prod_range"][1],       # Maximum PCR product size.
+            "tm_min": qpcr_params["tm_range"][0],           # Minimum melting temperature (Tm).
+            "tm_max": qpcr_params["tm_range"][1],           # Maximum melting temperature (Tm).
+        }
+    if race_params:
+        race_params = {
+            "window_size": race_params["window_size"],      # Size of the search window from the 5' and 3' ends.
+            "k_range": range(                               # Range of possible k-mer (primer) lengths.
+                race_params["k_range"][0], 
+                race_params["k_range"][1]
+            ),   
+            "gc_min": race_params["gc_range"][0]*100,       # Minimum GC content percentage.
+            "gc_max": race_params["gc_range"][1]*100,       # Maximum GC content percentage.
+            "tm_min": race_params["tm_range"][0],           # Minimum melting temperature (Tm).
+            "tm_max": race_params["tm_range"][1],           # Maximum melting temperature (Tm).
+        }
+    return qpcr_params, race_params
+
+
+def create_design(fasta_file_path, primer_type, design_mode, qpcr_params, race_params):
     """
     Main function to execute the primer design pipeline.
     Returns:
@@ -443,29 +444,33 @@ def create_design(fasta_file_path, primer_type, design_mode):
         - For coverage mode: single DataFrame
     """
     print(f"📂 Reading FASTA file: {fasta_file_path}")
+    num_sequences = 0
     try:
         sequence_set = list(SeqIO.parse(fasta_file_path, "fasta"))
         if not sequence_set:
             print("❌ Error: No sequences found in the FASTA file.")
             return (None, None) if design_mode == "specificity" else None
-        print(f"✅ Loaded {len(sequence_set)} sequences.")
+        num_sequences = len(sequence_set)
+        print(f"✅ Loaded {num_sequences} sequences.")
     except FileNotFoundError:
         print(f"❌ Error: FASTA file not found at '{fasta_file_path}'")
         return (None, None) if design_mode == "specificity" else None
+
+    qpcr_params, race_params = parse_params(qpcr_params, race_params)
 
     results = None
     if design_mode == "specificity":
         print(f"🧬 Running in SPECIFICITY mode for {primer_type} primers...")
         if primer_type == "qPCR":
-            results = design_qpcr_primers(sequence_set, PARAMS_QPCR, design_mode)
+            results = design_qpcr_primers(sequence_set, qpcr_params, design_mode)
         elif primer_type == "RACE":
-            results = design_race_primers(sequence_set, PARAMS_RACE, design_mode)
+            results = design_race_primers(sequence_set, race_params, design_mode)
         else:
             print(f"⚠️ Unsupported primer type: {primer_type}")
             return None, None
     elif design_mode == "coverage":
         print(f"🎯 Running in COVERAGE mode for {primer_type} primers...")
-        results = find_coverage_primers(sequence_set, PARAMS_QPCR, PARAMS_RACE, primer_type)
+        results = find_coverage_primers(sequence_set, qpcr_params, race_params, primer_type)
     else:
         print(f"⚠️ Unsupported design mode: {design_mode}")
         return (None, None) if design_mode == "specificity" else None
@@ -521,11 +526,11 @@ def create_design(fasta_file_path, primer_type, design_mode):
         best_df = pd.DataFrame(best_df_rows) if best_df_rows else None
         other_df = pd.DataFrame(other_df_rows) if other_df_rows else None
 
-        if not best_df.empty: best_df.index = range(1, len(best_df) + 1)
-        if not other_df.empty: other_df.index = range(1, len(other_df) + 1)
+        if best_df is not None and not best_df.empty: best_df.index = range(1, len(best_df) + 1)
+        if other_df is not None and not other_df.empty: other_df.index = range(1, len(other_df) + 1)
         
         print("✅ Finished specificity design.")
-        return best_df, other_df
+        return num_sequences, best_df, other_df
 
     elif design_mode == "coverage":
         coverage_df_rows = []
@@ -538,14 +543,29 @@ def create_design(fasta_file_path, primer_type, design_mode):
 
         coverage_df = pd.DataFrame(coverage_df_rows) if coverage_df_rows else None
 
-        if not coverage_df.empty: coverage_df.index = range(1, len(coverage_df) + 1)
+        if coverage_df is not None and not coverage_df.empty: coverage_df.index = range(1, len(coverage_df) + 1)
 
         print("✅ Finished coverage design.")
-        return coverage_df, None
+        return num_sequences, coverage_df, None
 
 
 if __name__ == "__main__":
+    # testing (locally)
     FASTA_FILE_PATH = "./sample_data/avengers-3.fa"
     PRIMER_TYPE = "RACE"
     DESIGN_MODE = "specificity" 
-    create_design(FASTA_FILE_PATH, PRIMER_TYPE, DESIGN_MODE)
+    PARAMS_QPCR = {
+        'fw_range': (50, 100), 
+        'rev_range': (150, 200), 
+        'k_range': (18, 26), 
+        'gc_range': (0.5, 0.7), 
+        'prod_range': (80, 150), 
+        'tm_range': (57.0, 62.0)
+    }
+    PARAMS_RACE = {
+        'window_size': 200, 
+        'k_range': (23, 29), 
+        'gc_range': (0.5, 0.7), 
+        'tm_range': (57.0, 62.0)
+    }
+    create_design(FASTA_FILE_PATH, PRIMER_TYPE, DESIGN_MODE, PARAMS_QPCR, PARAMS_RACE)
