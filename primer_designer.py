@@ -487,7 +487,7 @@ def create_design(fasta_file_path, primer_type, design_mode):
 
 
 if __name__ == "__main__":
-    FASTA_FILE_PATH = "./data/avengers-3.fa"
+    FASTA_FILE_PATH = "./sample_data/avengers-3.fa"
     PRIMER_TYPE = "RACE"
     DESIGN_MODE = "coverage" 
     create_design(FASTA_FILE_PATH, PRIMER_TYPE, DESIGN_MODE)
