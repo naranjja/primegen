@@ -137,10 +137,10 @@ def calculate_melting_temp(sequence, na_conc=50e-3):
 
 def extract_isoform_id(name):
     """
-    Extracts an isoform number (e.g., '3') from a sequence name.
-    Tries to match patterns like 'gene-3', 'transcript_2', etc.
+    Extracts the isoform ID from a sequence name like 'CASC15-205 cDNA (4297 bp)'.
+    Returns '205' from 'CASC15-205'.
     """
-    match = re.search(r"[-_]?(\d+)$", name)
+    match = re.search(r"CASC15-(\d+)", name)
     if not match:
         print(f"⚠️ Could not extract isoform ID from: {name}")
     return match.group(1) if match else ""
@@ -158,24 +158,17 @@ def check_primer_hits(primer, sequences):
     ]
     return {"total": len(hits), "isoforms": ",".join(hits)}
 
-def find_candidate_primers(region, k_range, gc_min, gc_max):
-    """
-    Finds unique k-mers within a sequence region that meet GC content criteria.
 
-    Args:
-        region (str): The DNA sequence region to search.
-        k_range (range): The range of k-mer lengths.
-        gc_min (float): The minimum allowed GC content.
-        gc_max (float): The maximum allowed GC content.
-
-    Returns:
-        list: A list of unique candidate primer sequences.
-    """
-    candidates = set()
-    for kmer in extract_kmers(region, k_range):
-        if gc_min <= calculate_gc_content(kmer) <= gc_max:
-            candidates.add(kmer)
-    return list(candidates)
+def find_candidate_primers(sequence, k_range, gc_min, gc_max, tm_min, tm_max):
+    candidates = []
+    for k in k_range:
+        for i in range(len(sequence) - k + 1):
+            kmer = sequence[i:i + k]
+            gc = calculate_gc_content(kmer)
+            tm = mt.Tm_NN(Seq(kmer))
+            if gc_min <= gc <= gc_max and tm_min <= tm <= tm_max:
+                candidates.append(kmer)
+    return candidates
 
 # ==============================================================================
 # --- PRIMER DESIGN CORE LOGIC ---
@@ -213,9 +206,23 @@ def design_qpcr_primers(sequences, params, mode):
         fw_region = seq[params["fw_start"] - 1:params["fw_end"]]
         rev_region = seq[params["rev_start"] - 1:params["rev_end"]]
 
-        fw_candidates = find_candidate_primers(fw_region, params["k_range"], params["gc_min"], params["gc_max"])
-        # Find k-mers on the template strand, then reverse-complement them to get actual primers.
-        rev_template_candidates = find_candidate_primers(rev_region, params["k_range"], params["gc_min"], params["gc_max"])
+        fw_candidates = find_candidate_primers(
+            fw_region,
+            params["k_range"],
+            params["gc_min"],
+            params["gc_max"],
+            params["tm_min"],
+            params["tm_max"]
+        )
+        rev_template_candidates = find_candidate_primers(
+            rev_region,
+            params["k_range"],
+            params["gc_min"],
+            params["gc_max"],
+            params["tm_min"],
+            params["tm_max"]
+        )
+
         # Create a map of {actual_reverse_primer: template_sequence} for calculating product size later.
         rev_candidates_map = {reverse_complement(p): p for p in rev_template_candidates}
 
@@ -235,11 +242,11 @@ def design_qpcr_primers(sequences, params, mode):
             isoform_id = extract_isoform_id(name)
             valid_fw = [
                 fw for fw, check in fw_checks.items()
-                if isoform_id in check["isoforms"] and check["total"] <= 2
+                if isoform_id in check["isoforms"]
             ]
             valid_rev = [
                 rv for rv, check in rev_checks.items()
-                if isoform_id in check["isoforms"] and check["total"] <= 2
+                if isoform_id in check["isoforms"]
             ]
         
         print(f"🔍 [{name}] Found {len(valid_fw)} FW primers, {len(valid_rev)} REV primers after specificity filtering.")
@@ -299,11 +306,31 @@ def design_race_primers(sequences, params, mode):
     for name, seq in valid_sequences:
         fw_region = seq[:params["window_size"]]
         rev_region = seq[-params["window_size"]:]
+        rev_template = reverse_complement(rev_region)  # reverse strand (3'–5')
 
-        fw_candidates = find_candidate_primers(fw_region, params["k_range"], params["gc_min"], params["gc_max"])
-        # --- CORRECTED REVERSE PRIMER GENERATION ---
-        rev_template_candidates = find_candidate_primers(rev_region, params["k_range"], params["gc_min"], params["gc_max"])
-        rev_candidates = [reverse_complement(p) for p in rev_template_candidates]
+        fw_candidates = find_candidate_primers(
+            fw_region,
+            params["k_range"],
+            params["gc_min"],
+            params["gc_max"],
+            params["tm_min"],
+            params["tm_max"]
+        )
+        rev_candidates = find_candidate_primers(
+            rev_template,
+            params["k_range"],
+            params["gc_min"],
+            params["gc_max"],
+            params["tm_min"],
+            params["tm_max"]
+        )
+
+        print(f"\n🧬 Isoform: {name}")
+        print(f"Forward region: {fw_region[:50]}...")
+        print(f"Reverse region: {rev_region[:50]}...")
+        print(f"Rev template strand: {rev_template[:50]}...")
+        print(f"First FW primers: {fw_candidates[:3]}")
+        print(f"First REV primers: {rev_candidates[:3]}")
 
         if not fw_candidates or not rev_candidates:
             best_primers[name] = None
@@ -317,22 +344,17 @@ def design_race_primers(sequences, params, mode):
         valid_rev = rev_candidates
         if mode == "specificity":
             isoform_id = extract_isoform_id(name)
-            valid_fw = [
-                fw for fw, check in fw_checks.items()
-                if isoform_id in check["isoforms"] and check["total"] <= 2
-            ]
-            valid_rev = [
-                rv for rv, check in rev_checks.items()
-                if isoform_id in check["isoforms"] and check["total"] <= 2
-            ]
+            valid_fw = [fw for fw, check in fw_checks.items() if isoform_id in check["isoforms"]]
+            valid_rev = [rv for rv, check in rev_checks.items() if isoform_id in check["isoforms"]]
 
-        print(f"🔍 [{name}] Found {len(valid_fw)} FW primers, {len(valid_rev)} REV primers after specificity filtering.")
+        print(f"Valid FW (specific): {[p[:10] for p in valid_fw]}")
+        print(f"Valid REV (specific): {[p[:10] for p in valid_rev]}")
 
         best_pair = None
         other_pairs = []
 
         for fw, rv in product(valid_fw, valid_rev):
-            primer_pair = {"forward": fw, "reverse": rv, "product_size": None} # Size not applicable for RACE
+            primer_pair = {"forward": fw, "reverse": rv, "product_size": None}
             if mode == "specificity":
                 best_pair = primer_pair
                 break
@@ -341,9 +363,6 @@ def design_race_primers(sequences, params, mode):
                     other_pairs.append(primer_pair)
                 if not best_pair:
                     best_pair = primer_pair
-
-        # --- REMOVED LOGIC FLAW ---
-        # The original code had a 'break' here that prematurely exited the main loop.
 
         best_primers[name] = best_pair
         other_options[name] = other_pairs
@@ -450,7 +469,7 @@ def create_design(fasta_file_path, primer_type, design_mode):
         print(f"⚠️ Unsupported design mode: {design_mode}")
         return
 
-    # --- Process and Save Results ---
+    # --- Process and Return Results ---
     
     df_rows = []
     if design_mode == "specificity":
@@ -460,10 +479,10 @@ def create_design(fasta_file_path, primer_type, design_mode):
             df_rows.append({
                 "Isoform": isoform_name,
                 "Primer_Forward": f,
-                "GC_Forward": calculate_gc_content(f),
-                "Tm_Forward": calculate_melting_temp(f),
                 "Primer_Reverse": r,
+                "GC_Forward": calculate_gc_content(f),
                 "GC_Reverse": calculate_gc_content(r),
+                "Tm_Forward": calculate_melting_temp(f),
                 "Tm_Reverse": calculate_melting_temp(r),
                 "Hairpin_Forward": find_longest_complementary_run(f, reverse_complement(f)),
                 "Hairpin_Reverse": find_longest_complementary_run(r, reverse_complement(r)),
@@ -480,8 +499,10 @@ def create_design(fasta_file_path, primer_type, design_mode):
             })
 
     if df_rows:
+        print("✅ Successfully executed design.")
         return pd.DataFrame(df_rows)
     else:
+        print("❌ No suitable primers were found with the given parameters.")
         return None
 
 
