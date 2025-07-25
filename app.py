@@ -11,8 +11,10 @@ def run_primer_design(fasta_path, primer_type, design_mode):
 # -------------------------------
 # Session State Initialization
 # -------------------------------
-if "output_df" not in st.session_state:
-    st.session_state.output_df = None
+if "output_df1" not in st.session_state:
+    st.session_state.output_df1 = None
+if "output_df2" not in st.session_state:
+    st.session_state.output_df2 = None
 if "fasta_path" not in st.session_state:
     st.session_state.fasta_path = None
 
@@ -21,7 +23,8 @@ if "fasta_path" not in st.session_state:
 # Clear output when input changes
 # -------------------------------
 def clear_output():
-    st.session_state.output_df = None
+    st.session_state.output_df1 = None
+    st.session_state.output_df2 = None
 
 
 # -------------------------------
@@ -61,27 +64,41 @@ if st.button("Run Primer Design ⚡"):
             st.session_state.fasta_path = tmp_file.name
 
         with st.spinner("Running primer design..."):
-            output_df = run_primer_design(
+            output_df1, output_df2 = run_primer_design(
                 st.session_state.fasta_path, primer_type, design_mode
             )
 
-        if output_df is None:
+        if output_df1 is None:
             st.error("No suitable primers were found with the given parameters.")
         else:
             st.success("Primer design completed!")
-            st.session_state.output_df = output_df
+            st.session_state.output_df1 = output_df1
+            st.session_state.output_df2 = output_df2
 
 # -------------------------------
 # Display Results
 # -------------------------------
-if st.session_state.output_df is not None:
-    st.dataframe(st.session_state.output_df)
+if st.session_state.output_df1 is not None:
+    st.subheader("Design")
+    st.dataframe(st.session_state.output_df1)
 
-    csv = st.session_state.output_df.to_csv(index=False).encode("utf-8")
+    csv1 = st.session_state.output_df1.to_csv(index=False).encode("utf-8")
     st.download_button(
-        label="Download Results as CSV",
-        data=csv,
-        file_name="primers_output.csv",
+        label=f"Download Design ({st.session_state.output_df1.shape[0]} pairs)",
+        data=csv1,
+        file_name=f"primers_design_{primer_type}_{design_mode}.csv",
+        mime="text/csv",
+    )
+
+if st.session_state.output_df2 is not None:
+    st.subheader("Others")
+    st.dataframe(st.session_state.output_df2)
+
+    csv2 = st.session_state.output_df2.to_csv(index=False).encode("utf-8")
+    st.download_button(
+        label=f"Download Others ({st.session_state.output_df2.shape[0]} pairs)",
+        data=csv2,
+        file_name=f"primers_others_{primer_type}_{design_mode}.csv",
         mime="text/csv",
     )
 
